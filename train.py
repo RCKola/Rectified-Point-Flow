@@ -31,6 +31,8 @@ def setup_training(cfg: DictConfig):
     loggers = setup_loggers(cfg)
     model: L.LightningModule = hydra.utils.instantiate(cfg.model)
     datamodule: L.LightningDataModule = hydra.utils.instantiate(cfg.data)
+    print(f"Loading datasets: {datamodule.dataset_names}")
+
     trainer: L.Trainer = hydra.utils.instantiate(cfg.trainer, logger=loggers)
     return model, datamodule, trainer, loggers 
 
