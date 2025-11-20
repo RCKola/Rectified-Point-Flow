@@ -1,0 +1,3 @@
+[submodule "rectified_point_flow/encoder/concerto"]
+	path = rectified_point_flow/encoder/concerto
+	url = https://github.com/RCKola/Concerto.git
