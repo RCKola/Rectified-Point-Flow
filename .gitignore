@@ -24,3 +24,4 @@ lightning_logs/
 
 # Poetry
 poetry.lock
+gpu_usage.csv

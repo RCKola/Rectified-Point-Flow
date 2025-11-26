@@ -39,8 +39,8 @@ class PointCloudTeacher(nn.Module):
 
     def extract_features(self, batch: dict) -> tuple:
         """Extract point features using the encoder."""
-        pointclouds = batch["pointclouds"]                          # (B, N, 3)
-        normals = batch["pointclouds_normals"]                      # (B, N, 3)
+        pointclouds = batch["pointclouds_gt"]                          # (B, N, 3)
+        normals = batch["pointclouds_normals_gt"]                      # (B, N, 3)
         points_per_part = batch["points_per_part"]                  # (B, P)
         B, N, C = pointclouds.shape
         n_valid_parts = points_per_part != 0
