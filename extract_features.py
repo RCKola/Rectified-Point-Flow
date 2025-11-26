@@ -27,8 +27,8 @@ def get_pca_color(feat, brightness=1.25, center=True):
 
 def extract_point_features(encoder, batch: Dict[str, torch.Tensor]) -> tuple:
     """Extract point features using the encoder."""
-    pointclouds = batch["pointclouds"]                          # (B, N, 3)
-    normals = batch["pointclouds_normals"]                      # (B, N, 3)
+    pointclouds = batch["pointclouds_gt"]                          # (B, N, 3)
+    normals = batch["pointclouds_normals_gt"]                      # (B, N, 3)
     points_per_part = batch["points_per_part"]                  # (B, P)
     B, N, C = pointclouds.shape
     n_valid_parts = points_per_part != 0
@@ -68,19 +68,38 @@ def extract_point_features(encoder, batch: Dict[str, torch.Tensor]) -> tuple:
         features = point["feat"].reshape(B, N, -1)
     return features, point, n_valid_parts
 
-def visualize_features(point_features: torch.Tensor, point_data: Dict[str, torch.Tensor]):
+def visualize_features(features: torch.Tensor, coords: torch.Tensor, id: int = 0):
     """Visualize point features using PCA coloring."""
-    pca_color = get_pca_color(point_features, brightness=1.2, center=True)
-    batched_coord = point_data["coord"].clone()
-    batched_coord[:, 0] += point_data["batch"] * 8.0
+    pca_color = get_pca_color(features, brightness=1.2, center=True)
+    # batched_coord = point_data["coord"].clone()
+    # batched_coord[:, 0] += point_data["batch"] * 8.0
 
     from rectified_point_flow.visualizer import VisualizationCallback
-    vis_cb = VisualizationCallback(save_dir="outputs/concerto_feature_viz")
+    vis_cb = VisualizationCallback(save_dir="outputs/concerto_features", image_size=2048)
+    vis_cb.setup(None, None, 'test')
+    print("save_dir", vis_cb.save_dir)
     vis_cb._save_sample_images(
-        points = batched_coord,
+        points = coords,
         colors = pca_color,
-        sample_name = "concerto_features"
+        sample_name = f"concerto_features_{id:02d}.png"
     ) 
+
+def run_visuals(load_path: str):
+    data = np.load(load_path)
+    point_features = torch.tensor(data["point_features"]).to(device)
+    point_coords = torch.tensor(data["point_coords"]).to(device)
+
+    batched_coords = point_coords.reshape(2, -1, 3)
+
+    print("Loaded point features shape:", point_features.shape)
+    print("Loaded point coordinates shape:", batched_coords.shape)
+
+    for i, coords in enumerate(batched_coords):
+        visualize_features(
+            features=point_features[i],
+            coords=coords,
+            id=i
+        )
 
 
 def main():
@@ -88,7 +107,15 @@ def main():
     parser = argparse.ArgumentParser(description='Extract features from concerto.')
     parser.add_argument('-d','--data-path', type=str, required=False, default=None,
                         help='Path to the point cloud data file.')
+    parser.add_argument('-v','--visualize', action='store_true',
+                        help='Whether to visualize the extracted features.')
+    parser.add_argument('-l','--load-path', type=str, required=False, default=None,
+                        help='Path to load the encoded data.')
     args = parser.parse_args()
+
+    if args.load_path is not None:
+        run_visuals(args.load_path)
+        return
 
     concerto.utils.set_seed(42)
     if flash_attn is not None:
@@ -111,7 +138,7 @@ def main():
         data_root=f"{args.data_path}/datasets",
         dataset_names=["ikea"],
         num_points_to_sample=2000,
-        batch_size=2,
+        batch_size=10,
         num_workers=4
     )
     datamodule.setup("fit")
@@ -126,12 +153,9 @@ def main():
     point_features, point_data, _ = extract_point_features(model, sample)
 
     print("Feature extraction completed.")
-    print("Extracted point features shape:", point_features.shape)
-    print("Extracted features:", point_features)
-    print("Point coordinates keys:", point_data.keys())
-    print("Point coordinates shape:", point_data["coord"].shape)
-    print("Point batch shape:", point_data["batch"].shape)
-    print("Point batch:", point_data["batch"])
+    # print("Extracted point features shape:", point_features.shape)
+    # print("Extracted features:", point_features)
+    # print("Point coordinates keys:", point_data.keys())
 
     # Save features and coordinates
     np.savez(
