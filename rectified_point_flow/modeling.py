@@ -22,7 +22,6 @@ class RectifiedPointFlow(L.LightningModule):
     def __init__(
         self,
         feature_extractor: L.LightningModule,
-        alignment_teacher: L.LightningModule,
         flow_model: nn.Module,
         optimizer: "partial[torch.optim.Optimizer]",
         lr_scheduler: "partial[torch.optim.lr_scheduler._LRScheduler]" = None,
@@ -40,7 +39,6 @@ class RectifiedPointFlow(L.LightningModule):
     ):
         super().__init__()
         self.feature_extractor = feature_extractor
-        self.alignment_teacher = alignment_teacher
         self.flow_model = flow_model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
@@ -75,15 +73,12 @@ class RectifiedPointFlow(L.LightningModule):
         self.meter = MetricsMeter(self)
         self._freeze_encoder()
 
-        from .encoder.concerto import concerto
-        model = concerto.load("concerto_large", repo_id="Pointcept/Concerto")
-        self.alignment_teacher = PointCloudEncoder(
-            pc_feat_dim=64,
-            encoder=model,
-            optimizer=partial(torch.optim.Adam, lr=1e-4, weight_decay=1e-5), # Not needed
-            build_overlap_head=False
+        from .encoder.point_cloud_teacher import PointCloudTeacher
+        self.alignment_teacher = PointCloudTeacher(
+            encoder = None,
+            embed_dim = self.flow_model.embed_dim,
+            loss_type = "cosine"
         )
-        self._freeze_model(self.alignment_teacher)
 
     def _freeze_encoder(self, eval_mode: bool = False):
         if self.frozen_encoder or eval_mode:
@@ -98,13 +93,6 @@ class RectifiedPointFlow(L.LightningModule):
                 module.train()
             for param in self.feature_extractor.parameters():
                 param.requires_grad = True
-    
-    def _freeze_model(self, model: L.LightningModule):
-        model.eval()
-        for module in model.modules():
-            module.eval()
-        for param in model.parameters():
-            param.requires_grad = False
 
     def on_train_epoch_start(self):
         super().on_train_epoch_start()
@@ -148,11 +136,11 @@ class RectifiedPointFlow(L.LightningModule):
         u = u.clamp(eps, 1.0)
         return u
     
-    def _encode(self, data_dict: dict, encoder: L.LightningModule):
+    def _encode(self, data_dict: dict):
         """Extract features from input data using FP16."""
         with torch.inference_mode(self.frozen_encoder):
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=True):
-                out_dict = encoder(data_dict)
+                out_dict = self.feature_extractor(data_dict)
         points = out_dict["point"]
         points["batch"] = points["batch_level1"].clone()
         return points
@@ -182,7 +170,7 @@ class RectifiedPointFlow(L.LightningModule):
         B, N, _ = x_0.shape
 
         # Encode point clouds
-        latent = self._encode(data_dict, self.feature_extractor)
+        latent = self._encode(data_dict)
         
         # Sample timesteps
         timesteps = self._sample_timesteps(batch_size=B)            # (B, )
@@ -197,7 +185,7 @@ class RectifiedPointFlow(L.LightningModule):
             v_t[anchor_indices] = 0.0
         
         # Predict velocity field
-        v_pred = self.flow_model(
+        v_pred, interm_repr = self.flow_model(
             x=x_t,
             timesteps=timesteps,
             latent=latent,
@@ -206,8 +194,8 @@ class RectifiedPointFlow(L.LightningModule):
         )
 
         # Retrieve intermediate and target representations
-        interm_repr = self.flow_model.interm_repr
-        target_repr = self._get_target_repr(data_dict)
+        repr_pred = self.alignment_teacher(interm_repr)
+        repr_t = self.alignment_teacher.get_target(data_dict)
 
         output_dict = {
             "t": timesteps,
@@ -217,8 +205,8 @@ class RectifiedPointFlow(L.LightningModule):
             "x_1": x_1,
             "x_t": x_t,
             "latent": latent,
-            "repr_pred": interm_repr,
-            "repr_t": target_repr
+            "repr_pred": repr_pred,
+            "repr_t": repr_t
         }
 
         if self.pred_proc_fn is not None:
@@ -241,34 +229,15 @@ class RectifiedPointFlow(L.LightningModule):
         else:
             raise ValueError(f"Invalid loss type: {self.loss_type}")
         
-        loss += self.alignment_loss(repr_pred, repr_t)
+        alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t)
+        print(f"Computed alignment_loss:", alignment_loss.item())
+        loss += alignment_loss
 
         return {
             "loss": loss,
             "norm_v_pred": v_pred.norm(dim=-1).mean(),
             "norm_v_t": v_t.norm(dim=-1).mean(),
         }
-    
-    def alignment_loss(self, repr_pred: torch.Tensor, interm_repr: torch.Tensor, loss_type: str = "cosine"):
-        """Compute alignment loss."""
-        if repr_pred.shape != interm_repr.shape:
-            raise ValueError("Representation shapes do not match for alignment loss.")
-        if loss_type == "cosine":
-            loss = F.cosine_similarity(repr_pred, interm_repr, dim=-1).mean()
-        elif loss_type == "force":
-            loss = F.mse_loss(repr_pred, interm_repr, reduction="mean")
-        elif loss_type == "disp_l2":
-            dist = (repr_pred - interm_repr)**2
-            tau = 0.5 # temperature following Wang et al.
-            loss = torch.log2(torch.exp(-dist/tau).mean())
-        else:
-            raise ValueError(f"Invalid alignment loss type: {loss_type}")
-        return loss
-
-    def _get_target_repr(self, data_dict: dict):
-        """Retrieve target representation for alignment loss."""
-        features = self._encode(data_dict, self.alignment_teacher)
-        return features
 
     def training_step(self, data_dict: dict, batch_idx: int, dataloader_idx: int = 0):
         """Training step."""
@@ -372,7 +341,7 @@ class RectifiedPointFlow(L.LightningModule):
                 latent=latent,
                 scales=scales,
                 anchor_indices=anchor_indices,
-            )
+            )[0]
 
         x_0 = data_dict["pointclouds_gt"]
         x_1 = torch.randn_like(x_0) if x_1 is None else x_1
