@@ -18,4 +18,3 @@ up_axis: {
 batch_size: 4
 num_workers: 2
 limit_val_samples: 0  # 0 for all samples
-persistent_workers: false

@@ -1,6 +1,6 @@
 defaults:
   - encoder@feature_extractor: ptv3_object
-  - flow_model: point_cloud_dit
+  - flow_model: small_flow_model # point_cloud_dit
 
 _target_: rectified_point_flow.modeling.RectifiedPointFlow
 
