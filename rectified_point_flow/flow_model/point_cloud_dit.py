@@ -94,16 +94,7 @@ class PointCloudDiT(nn.Module):
             nn.Linear(self.embed_dim // 2, out_dim, bias=False)  # No bias for 3D coordinates
         )
 
-        # Intermediate representation for alignment loss
-        self.repa_head = nn.Sequential(
-            nn.Linear(self.embed_dim, self.embed_dim),
-            self.final_mlp_act(),
-            nn.Linear(self.embed_dim, self.embed_dim // 2),
-            self.final_mlp_act(),
-            nn.Linear(self.embed_dim // 2, in_dim)
-        )
-        self.repa_layer = torch.clip(num_layers // 4, min=1, max=8)
-        self.interm_repr = None
+        self.repa_layer = 2  # Layer index to extract intermediate representation
 
     def _add_anchor_embedding(
         self,
@@ -163,16 +154,17 @@ class PointCloudDiT(nn.Module):
         part_cu_seqlens = part_cu_seqlens.to(torch.int32)                # (n_valid_parts + 1, )                                                        # (bs, max_parts)
 
         # Transformer layers
+        interm_repr = None
         for i, layer in enumerate(self.transformer_layers):
             x = layer(x, timesteps, part_cu_seqlens, max_seqlen)         # (B, N, dim)
-            if i == self.repa_layer:                      
-                repa_out = self.repa_head(x)                             # save intermediate representation
-                self.interm_repr = repa_out                                  
+            if (i+1) == self.repa_layer:                      
+                interm_repr = x                                          # get intermediate representation                          
 
         # Final MLP, use float32 for better numerical stability
         with torch.amp.autocast(x.device.type, enabled=False):
             out = self.final_mlp(x.float())                              # (B, N, out_dim)
-        return out
+        
+        return out, interm_repr
 
 
 if __name__ == "__main__":
