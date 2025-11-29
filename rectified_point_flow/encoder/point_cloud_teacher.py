@@ -34,6 +34,8 @@ class PointCloudTeacher(nn.Module):
             self._freeze_model(self.encoder)
             
     def forward(self, interm_repr: torch.Tensor):
+        if self.loss_type == 'force':
+            interm_repr = F.normalize(interm_repr, p=2, dim=-1)
         aligned_repr = self.alignment_head(interm_repr)
         return aligned_repr
 
@@ -100,9 +102,16 @@ class PointCloudTeacher(nn.Module):
             loss += F.mse_loss(repr_pred, repr_t, reduction="mean")
         elif self.loss_type == "disp_l2":
             z = repr_pred.reshape(repr_pred.shape[0], -1)
-            dist = F.pdist(z, p=2).pow(2) / repr_pred.shape[-1]
+            dist = F.pdist(z, p=2).pow(2) / z.shape[1]
             tau = 0.5
-            loss = torch.log(torch.exp(-dist/tau).mean())
+
+            # Accounts for zero distance to self
+            dist = torch.concat([dist, dist, torch.zeros(z.shape[0]).to(dist.device)]) 
+
+            # Log sum exp trick for numerical stability
+            loss = torch.logsumexp(torch.exp(-dist/tau))
+            M = torch.tensor(dist.numel()).to(loss.device)
+            loss -= torch.log(M)
         else:
             raise ValueError(f"Invalid alignment loss type: {self.loss_type}")
         return self.lmbda * loss
