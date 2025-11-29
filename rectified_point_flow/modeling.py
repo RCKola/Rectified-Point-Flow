@@ -29,6 +29,7 @@ class RectifiedPointFlow(L.LightningModule):
         flow_model_ckpt: str = None,
         frozen_encoder: bool = False,
         anchor_free: bool = True,
+        use_repa: bool = False,
         loss_type: str = "mse",
         timestep_sampling: str = "u_shaped",
         inference_sampling_steps: int = 20,
@@ -44,6 +45,7 @@ class RectifiedPointFlow(L.LightningModule):
         self.lr_scheduler = lr_scheduler
         self.frozen_encoder = frozen_encoder
         self.anchor_free = anchor_free
+        self.use_repa = use_repa
         self.loss_type = loss_type
         self.timestep_sampling = timestep_sampling
         self.inference_sampling_steps = inference_sampling_steps
@@ -78,7 +80,7 @@ class RectifiedPointFlow(L.LightningModule):
             encoder = None,
             embed_dim = self.flow_model.embed_dim,
             loss_type = "cosine"
-        )
+        ) if self.use_repa else None
 
     def _freeze_encoder(self, eval_mode: bool = False):
         if self.frozen_encoder or eval_mode:
@@ -194,8 +196,12 @@ class RectifiedPointFlow(L.LightningModule):
         )
 
         # Retrieve intermediate and target representations
-        repr_pred = self.alignment_teacher(interm_repr)
-        repr_t = self.alignment_teacher.get_target(data_dict)
+        if self.use_repa:
+            repr_pred = self.alignment_teacher(interm_repr)
+            repr_t = self.alignment_teacher.get_target(data_dict)
+        else:
+            repr_pred = torch.zeros_like(interm_repr)
+            repr_t = torch.zeros_like(interm_repr)
 
         output_dict = {
             "t": timesteps,
@@ -228,15 +234,17 @@ class RectifiedPointFlow(L.LightningModule):
             loss = F.huber_loss(v_pred, v_t, reduction="mean")
         else:
             raise ValueError(f"Invalid loss type: {self.loss_type}")
-        
-        alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t)
-        print(f"Computed alignment_loss:", alignment_loss.item())
+
+        flow_loss = loss.item()
+        alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t) if self.use_repa else torch.tensor(0).to(loss.device)
         loss += alignment_loss
 
         return {
             "loss": loss,
             "norm_v_pred": v_pred.norm(dim=-1).mean(),
             "norm_v_t": v_t.norm(dim=-1).mean(),
+            "flow_loss": flow_loss,
+            "alignment_loss": alignment_loss
         }
 
     def training_step(self, data_dict: dict, batch_idx: int, dataloader_idx: int = 0):
