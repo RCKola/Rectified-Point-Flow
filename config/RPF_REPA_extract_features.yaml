@@ -1,4 +1,4 @@
-# Overlap prediction
+# Feature extraction
 
 defaults:
   - model: encoder/ptv3_object
@@ -15,12 +15,12 @@ data:
   num_workers: 1
 
 # Log directory
-log_dir: ./demo/overlap
+log_dir: ./demo/features
 
 # Checkpoint path
 ckpt_path: null          # when null, the checkpoint will be downloaded from Hugging Face
 
 # Model settings
 model:
-  compute_overlap_points: true
-  build_overlap_head: true
+  compute_overlap_points: false
+  build_overlap_head: false

@@ -27,7 +27,7 @@ data:
   num_workers: 1
 
 # Log directory
-log_dir: ./demo/
+log_dir: ./demo/sample
 
 # Checkpoint path
 ckpt_path: null          # when null, the checkpoint will be downloaded from Hugging Face
