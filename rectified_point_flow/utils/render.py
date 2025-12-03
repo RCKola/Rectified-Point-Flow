@@ -169,6 +169,28 @@ def probs_to_colors(
     return torch.tensor(colors_rgb, dtype=torch.float32, device=device)
 
 
+def get_pca_colors(feat, brightness=1.25, center=True):
+    """Convert features to RGB colors using PCA.
+    
+    Args:
+        feat: Point features of shape (N, D).
+        brightness: Scaling factor for color intensity.
+        center: Whether to center the features before PCA.
+
+    Returns:
+        RGB colors tensor of shape (N, 3) with values in [0, 1].
+    """
+    u, s, v = torch.pca_lowrank(feat, center=center, q=6, niter=5)
+    projection = feat @ v
+    projection = projection[:, :3] * 0.6 + projection[:, 3:6] * 0.4
+    min_val = projection.min(dim=-2, keepdim=True)[0]
+    max_val = projection.max(dim=-2, keepdim=True)[0]
+    div = torch.clamp(max_val - min_val, min=1e-6)
+    color = (projection - min_val) / div * brightness
+    color = color.clamp(0.0, 1.0)
+    return color
+
+
 def img_tensor_to_pil(image_tensor: torch.Tensor) -> Image: 
     """Tensor to PIL Image (H, W, C) and scale to [0, 255]."""
     image_np = (image_tensor.cpu().numpy() * 255).astype('uint8')

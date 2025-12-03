@@ -8,7 +8,7 @@ import lightning as L
 import torch
 from lightning.pytorch.callbacks import Callback
 
-from .utils.render import visualize_point_clouds, img_tensor_to_pil, part_ids_to_colors, probs_to_colors
+from .utils.render import visualize_point_clouds, img_tensor_to_pil, part_ids_to_colors, probs_to_colors, get_pca_colors
 from .utils.point_clouds import ppp_to_ids
 
 logger = logging.getLogger("Visualizer")
@@ -290,3 +290,47 @@ class OverlapVisualizationCallback(VisualizationCallback):
 
             if self.max_samples_per_batch is not None and i >= self.max_samples_per_batch:
                 break
+        
+class FeatureVisualizationCallback(VisualizationCallback):
+    """Visualization callback for point feature visualization."""
+
+    def on_test_batch_end(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+        outputs: Any,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        """Save feature visualizations at the end of each test batch."""
+        if self.vis_dir is None:
+            return
+
+        features = outputs["point"]["feat"]
+        B, _ = batch["points_per_part"].shape                                 
+        pts_gt = batch["pointclouds_gt"].reshape(B, -1, 3)                    # (bs, N, 3)
+        features = features.reshape(B, -1, features.shape[-1])                # (bs, N, feature_dim)
+
+        trainer.logger.log_hyperparams({"output_feature_shape": features.shape})
+
+        # Scale to original size
+        if self.scale_to_original_size:
+            scale = batch["scale"][:, 0]                                      # (bs,)
+            pts_gt = pts_gt * scale[:, None, None]
+
+        for i in range(B):
+            dataset_name = batch["dataset_name"][i]
+            sample_name = f"{dataset_name}_sample{int(batch['index'][i]):05d}"
+            
+            colors = get_pca_colors(features[i], brightness=1.2, center=True)
+            self._save_sample_images(
+                points=pts_gt[i],
+                colors=colors,
+                sample_name=f"{sample_name}_features",
+            )
+
+            if self.max_samples_per_batch is not None and i >= self.max_samples_per_batch:
+                break
+
+
