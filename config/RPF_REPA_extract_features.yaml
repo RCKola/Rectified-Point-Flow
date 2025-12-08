@@ -18,7 +18,7 @@ data:
 log_dir: ./demo/features
 
 # Checkpoint path
-ckpt_path: null          # when null, the checkpoint will be downloaded from Hugging Face
+ckpt_path: ./weights/RPF_base_pretrain_ep600.ckpt          # when null, the checkpoint will be downloaded from Hugging Face
 
 # Model settings
 model:

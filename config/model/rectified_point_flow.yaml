@@ -7,7 +7,7 @@ _target_: rectified_point_flow.modeling.RectifiedPointFlow
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: True
-  lr: 1e-4
+  lr: 1e-4 # original 1e-4
   betas: [0.95, 0.999]
   weight_decay: 1e-6
   eps: 1e-8
@@ -22,4 +22,5 @@ timestep_sampling: "u_shaped"
 inference_sampler: "euler"
 inference_sampling_steps: 50
 n_generations: 1
-anchor_free: true
+anchor_free: False
+use_repa: True
