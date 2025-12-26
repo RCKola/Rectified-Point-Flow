@@ -21,6 +21,7 @@ lightning_logs/
 # Demo results
 /demo/visualizations
 /demo/results
+/demo/overlap
 
 # Poetry
 poetry.lock
