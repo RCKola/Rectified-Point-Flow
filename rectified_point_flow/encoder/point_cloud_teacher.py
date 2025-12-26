@@ -24,40 +24,40 @@ def get_graph_feat(x: torch.Tensor, k: int = 5) -> torch.Tensor:
 class PointCloudTeacher(nn.Module):
     def __init__(
         self,
-        encoder: nn.Module,
+        encoder: nn.Module | None,
         embed_dim: int,
         repr_dim: int = 1728, #  Output dimension of Concerto large
-        final_mlp_act: nn.Module = nn.SiLU,
         lmbda: float = 0.5,
         loss_type: str = "cosine",
-        head_type: str = "edgeconv"
+        head_type: str = "edgeconv",
+        num_neighbors: int = 5
     ):
         super().__init__()
         self.encoder = encoder
         self.embed_dim = embed_dim
         self.repr_dim = repr_dim
-        self.final_mlp_act = final_mlp_act
         self.lmbda = lmbda
         self.loss_type = loss_type
         self.head_type = head_type
+        self.num_neighbors = num_neighbors
 
         self.mlp_head = nn.Sequential(
             nn.Linear(self.embed_dim, self.embed_dim),
-            self.final_mlp_act(),
+            nn.ReLU(inplace=True),
             nn.Linear(self.embed_dim, self.embed_dim),
-            self.final_mlp_act(),
+            nn.ReLU(inplace=True),
             nn.Linear(self.embed_dim, self.repr_dim)
         ) if self.loss_type != "disp_l2" or self.head_type != "mlp" else nn.Identity()
 
         self.edgeconv1 = nn.Sequential(
             nn.Conv2d(2 * self.embed_dim, self.repr_dim // 2, kernel_size=1, bias=False),
             nn.BatchNorm2d(self.repr_dim // 2),
-            nn.LeakyReLU(negative_slope=0.2)
+            nn.LeakyReLU(0.2, inplace=True)
         )
         self.edgeconv2 = nn.Sequential(
             nn.Conv2d(self.repr_dim, self.repr_dim, kernel_size=1, bias=False),
             nn.BatchNorm2d(self.repr_dim),
-            nn.LeakyReLU(negative_slope=0.2)
+            nn.LeakyReLU(0.2, inplace=True)
         )
 
         if encoder is None and loss_type != "disp_l2":
@@ -66,12 +66,13 @@ class PointCloudTeacher(nn.Module):
             self._freeze_model(self.encoder)
     
     def edgeconv(self, x: torch.Tensor) -> torch.Tensor:
-        x = get_graph_feat(x, k=5)                  # (B, N, C) -> (B, 2C, N, k)
+        K = self.num_neighbors
+        x = get_graph_feat(x, k=K)                  # (B, N, C) -> (B, 2C, N, k)
         x1 = self.edgeconv1(x)                      # (B, D/2, N, k)
         x1 = x1.max(dim=-1, keepdim=False)[0]       # (B, D/2, N)
         x1 = x1.transpose(1, 2)                     # (B, N, D/2)
 
-        x = get_graph_feat(x1, k=5)                 # (B, D, N, k)
+        x = get_graph_feat(x1, k=K)                 # (B, D, N, k)
         x2 = self.edgeconv2(x)                      # (B, D, N, k)
         x2 = x2.max(dim=-1, keepdim=False)[0]       # (B, D, N)
         x2 = x2.transpose(1, 2)                     # (B, N, D)

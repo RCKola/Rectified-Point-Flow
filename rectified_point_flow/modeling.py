@@ -23,6 +23,7 @@ class RectifiedPointFlow(L.LightningModule):
         self,
         feature_extractor: L.LightningModule,
         flow_model: nn.Module,
+        alignment_teacher: nn.Module,
         optimizer: "partial[torch.optim.Optimizer]",
         lr_scheduler: "partial[torch.optim.lr_scheduler._LRScheduler]" = None,
         encoder_ckpt: str = None,
@@ -41,6 +42,7 @@ class RectifiedPointFlow(L.LightningModule):
         super().__init__()
         self.feature_extractor = feature_extractor
         self.flow_model = flow_model
+        self.alignment_teacher = alignment_teacher if use_repa else None
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.frozen_encoder = frozen_encoder
@@ -75,12 +77,13 @@ class RectifiedPointFlow(L.LightningModule):
         self.meter = MetricsMeter(self)
         self._freeze_encoder()
 
-        from .encoder.point_cloud_teacher import PointCloudTeacher
-        self.alignment_teacher = PointCloudTeacher(
-            encoder = None,
-            embed_dim = self.flow_model.embed_dim,
-            loss_type = "cosine"
-        ) if self.use_repa else None
+        # from .encoder.point_cloud_teacher import PointCloudTeacher
+        # self.alignment_teacher = PointCloudTeacher(
+        #     encoder = None,
+        #     embed_dim = self.flow_model.embed_dim,
+        #     loss_type = "cosine"
+        # ) if self.use_repa else None
+
 
     def _freeze_encoder(self, eval_mode: bool = False):
         if self.frozen_encoder or eval_mode:

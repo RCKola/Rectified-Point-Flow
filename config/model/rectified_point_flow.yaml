@@ -1,6 +1,7 @@
 defaults:
   - encoder@feature_extractor: ptv3_object
   - flow_model: small_flow_model # point_cloud_dit
+  - encoder@alignment_teacher: concerto_repa
 
 _target_: rectified_point_flow.modeling.RectifiedPointFlow
 
