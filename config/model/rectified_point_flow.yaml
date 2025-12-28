@@ -1,6 +1,6 @@
 defaults:
   - encoder@feature_extractor: ptv3_object
-  - flow_model: small_flow_model # point_cloud_dit
+  - flow_model: point_cloud_dit
   - encoder@alignment_teacher: concerto_repa
 
 _target_: rectified_point_flow.modeling.RectifiedPointFlow
@@ -8,7 +8,7 @@ _target_: rectified_point_flow.modeling.RectifiedPointFlow
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: True
-  lr: 1e-4 # original 1e-4
+  lr: 1e-4
   betas: [0.95, 0.999]
   weight_decay: 1e-6
   eps: 1e-8

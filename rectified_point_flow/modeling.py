@@ -77,14 +77,6 @@ class RectifiedPointFlow(L.LightningModule):
         self.meter = MetricsMeter(self)
         self._freeze_encoder()
 
-        # from .encoder.point_cloud_teacher import PointCloudTeacher
-        # self.alignment_teacher = PointCloudTeacher(
-        #     encoder = None,
-        #     embed_dim = self.flow_model.embed_dim,
-        #     loss_type = "cosine"
-        # ) if self.use_repa else None
-
-
     def _freeze_encoder(self, eval_mode: bool = False):
         if self.frozen_encoder or eval_mode:
             self.feature_extractor.eval()
@@ -230,24 +222,23 @@ class RectifiedPointFlow(L.LightningModule):
         repr_t = output_dict["repr_t"]
 
         if self.loss_type == "mse":
-            loss = F.mse_loss(v_pred, v_t, reduction="mean")
+            flow_loss = F.mse_loss(v_pred, v_t, reduction="mean")
         elif self.loss_type == "l1":
-            loss = F.l1_loss(v_pred, v_t, reduction="mean")
+            flow_loss = F.l1_loss(v_pred, v_t, reduction="mean")
         elif self.loss_type == "huber":
-            loss = F.huber_loss(v_pred, v_t, reduction="mean")
+            flow_loss = F.huber_loss(v_pred, v_t, reduction="mean")
         else:
             raise ValueError(f"Invalid loss type: {self.loss_type}")
 
-        flow_loss = loss.item()
-        alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t) if self.use_repa else torch.tensor(0).to(loss.device)
-        loss += alignment_loss
+        alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t) if self.use_repa else torch.tensor(0.0, device=flow_loss.device)
+        loss = flow_loss + alignment_loss
 
         return {
             "loss": loss,
-            "norm_v_pred": v_pred.norm(dim=-1).mean(),
-            "norm_v_t": v_t.norm(dim=-1).mean(),
-            "flow_loss": flow_loss,
-            "alignment_loss": alignment_loss
+            "norm_v_pred": v_pred.norm(dim=-1).mean().detach(),
+            "norm_v_t": v_t.norm(dim=-1).mean().detach(),
+            "flow_loss": flow_loss.detach(),
+            "alignment_loss": alignment_loss.detach()
         }
 
     def training_step(self, data_dict: dict, batch_idx: int, dataloader_idx: int = 0):
