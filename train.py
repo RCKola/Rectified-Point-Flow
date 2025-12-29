@@ -18,6 +18,7 @@ from rectified_point_flow.utils.training import (
 
 logger = logging.getLogger("Train")
 warnings.filterwarnings("ignore", module="lightning")  # ignore warning from lightning' connectors
+torch.autograd.set_detect_anomaly(True) # temporary debugging aid
 
 # Optimize for performance
 torch.backends.cuda.matmul.allow_tf32 = True
