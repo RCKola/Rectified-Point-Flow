@@ -29,7 +29,7 @@ class PointCloudTeacher(nn.Module):
         repr_dim: int = 1728, #  Output dimension of Concerto large
         lmbda: float = 0.5,
         loss_type: str = "cosine",
-        head_type: str = "edgeconv",
+        head_type: str = "mlp",
         num_neighbors: int = 5
     ):
         super().__init__()
@@ -41,25 +41,23 @@ class PointCloudTeacher(nn.Module):
         self.head_type = head_type
         self.num_neighbors = num_neighbors
 
-        self.mlp_head = nn.Sequential(
-            nn.Linear(self.embed_dim, self.embed_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(self.embed_dim, self.embed_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(self.embed_dim, self.repr_dim)
-        ) if self.loss_type != "disp_l2" or self.head_type != "mlp" else nn.Identity()
+        use_mlp_head = self.loss_type != "disp_l2" or self.head_type == "mlp"
+        if use_mlp_head:
+            self.mlp_head = nn.Sequential(
+                nn.Linear(self.embed_dim, self.embed_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(self.embed_dim, self.embed_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(self.embed_dim, self.repr_dim)
+            )
 
-        self.edgeconv1 = nn.Sequential(
-            nn.Conv2d(2 * self.embed_dim, self.repr_dim // 2, kernel_size=1, bias=False),
-            nn.BatchNorm2d(self.repr_dim // 2),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
-        self.edgeconv2 = nn.Sequential(
-            nn.Conv2d(self.repr_dim, self.repr_dim, kernel_size=1, bias=False),
-            nn.BatchNorm2d(self.repr_dim),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
-
+        if self.head_type == "edgeconv":
+            self.conv = nn.Sequential(
+                nn.Conv2d(2*self.embed_dim, self.repr_dim, kernel_size=1, bias=False),
+                nn.BatchNorm2d(self.repr_dim),
+                nn.LeakyReLU(0.2, inplace=True)
+            )
+            
         if encoder is None and loss_type != "disp_l2":
             from .concerto import concerto
             self.encoder = concerto.load("concerto_large", repo_id="Pointcept/Concerto")
@@ -68,15 +66,10 @@ class PointCloudTeacher(nn.Module):
     def edgeconv(self, x: torch.Tensor) -> torch.Tensor:
         K = self.num_neighbors
         x = get_graph_feat(x, k=K)                  # (B, N, C) -> (B, 2C, N, k)
-        x1 = self.edgeconv1(x)                      # (B, D/2, N, k)
-        x1 = x1.max(dim=-1, keepdim=False)[0]       # (B, D/2, N)
-        x1 = x1.transpose(1, 2)                     # (B, N, D/2)
-
-        x = get_graph_feat(x1, k=K)                 # (B, D, N, k)
-        x2 = self.edgeconv2(x)                      # (B, D, N, k)
-        x2 = x2.max(dim=-1, keepdim=False)[0]       # (B, D, N)
-        x2 = x2.transpose(1, 2)                     # (B, N, D)
-        return x2
+        x = self.conv(x)                            # (B, 2C, N, k) -> (B, D, N, k)
+        x = x.max(dim=-1, keepdim=False)[0]         # (B, D, N)
+        x = x.transpose(1, 2)                       # (B, N, D)
+        return x
             
     def forward(self, interm_repr: torch.Tensor) -> torch.Tensor:
         if self.loss_type == 'force':
