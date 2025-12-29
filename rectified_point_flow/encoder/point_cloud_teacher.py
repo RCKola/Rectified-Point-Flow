@@ -3,24 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def get_graph_feat(x: torch.Tensor, k: int = 5) -> torch.Tensor:
-    """Optimized KNN feature generator from DGCNN"""
-    B, N, C = x.shape
-
-    # Compute indices using KNN
-    pair_dist = -torch.cdist(x, x, p=2).pow(2)
-    idx = pair_dist.topk(k=k, dim=-1)[1]                # (B, N, k)
-
-    x_ = x.unsqueeze(1).expand(-1, N, -1, -1)           # (B, N, C) -> (B, 1, N, C) -> (B, N, N, C)
-    idx_ = idx.unsqueeze(-1).expand(-1, -1, -1, C)      # (B, N, k, C)
-    feat = torch.gather(x_, dim=2, index=idx_)          # (B, N, k, C)
-    center = x.unsqueeze(2)                             # (B, N, 1, C)
-
-    features = torch.empty(B, N, k, 2*C, device=x.device, dtype=x.dtype)
-    features[..., :C] = feat - center
-    features[..., C:] = center
-    return features.permute(0, 3, 1, 2)                 # (B, 2*C, N, k)
-
 class PointCloudTeacher(nn.Module):
     def __init__(
         self,
@@ -63,24 +45,40 @@ class PointCloudTeacher(nn.Module):
             self.encoder = concerto.load("concerto_large", repo_id="Pointcept/Concerto")
             self._freeze_model(self.encoder)
     
-    def edgeconv(self, x: torch.Tensor) -> torch.Tensor:
+    def edgeconv(self, x: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
         K = self.num_neighbors
-        x = get_graph_feat(x, k=K)                  # (B, N, C) -> (B, 2C, N, k)
-        x = self.conv(x)                            # (B, 2C, N, k) -> (B, D, N, k)
-        x = x.max(dim=-1, keepdim=False)[0]         # (B, D, N)
-        x = x.transpose(1, 2)                       # (B, N, D)
+        x = self.get_graph_feat(x, idx)                 # (B, N, C) -> (B, 2C, N, k)
+        x = self.conv(x)                                # (B, 2C, N, k) -> (B, D, N, k)
+        x = x.max(dim=-1, keepdim=False)[0]             # (B, D, N)
+        x = x.transpose(1, 2)                           # (B, N, D)
         return x
             
-    def forward(self, interm_repr: torch.Tensor) -> torch.Tensor:
+    def forward(self, interm_repr: torch.Tensor, data_dict: dict = None) -> torch.Tensor:
         if self.loss_type == 'force':
             interm_repr = F.normalize(interm_repr, p=2, dim=-1)
+        repr_pred = self.project_repr(interm_repr, data_dict)
+        repr_t = self.get_target(data_dict)
+        return repr_pred, repr_t
+
+    def project_repr(self, repr: torch.Tensor, data_dict: dict) -> torch.Tensor:
+        """Project representation to encoder dimension using MLP head."""
         if self.head_type == "edgeconv":
-            aligned_repr = self.edgeconv(interm_repr)
+            idx = self._knn_from_gt(data_dict["pointclouds_gt"], k=self.num_neighbors)
+            repr = self.edgeconv(repr, idx)
         elif self.head_type == "mlp":
-            aligned_repr = self.mlp_head(interm_repr)
+            repr = self.mlp_head(repr)
         else:
             raise ValueError(f"Invalid head type: {self.head_type}")
-        return aligned_repr
+        return repr
+    
+    def get_target(self, data_dict: dict) -> torch.Tensor | None:
+        """Retrieve target representation for alignment loss."""
+        if data_dict is None or self.loss_type == "disp_l2":
+            return None
+        features = self.extract_features(data_dict)[0]
+        if self.head_type == "edgeconv":
+            features = self._spatial_normalize(features)
+        return features
 
     def extract_features(self, batch: dict) -> tuple:
         """Extract point features using the encoder."""
@@ -125,15 +123,6 @@ class PointCloudTeacher(nn.Module):
                 point["normal"] = part_normals
                 features = point["feat"].reshape(B, N, -1)
         return features, point, n_valid_parts
-    
-    def get_target(self, data_dict: dict) -> torch.Tensor | None:
-        """Retrieve target representation for alignment loss."""
-        if data_dict is None or self.loss_type == "disp_l2":
-            return None
-        features = self.extract_features(data_dict)[0]
-        if self.head_type == "edgeconv":
-            features = self._spatial_normalize(features)
-        return features
 
     def loss(self, repr_pred: torch.Tensor, repr_t: torch.Tensor) -> torch.Tensor:
         """Compute alignment loss."""
@@ -165,6 +154,28 @@ class PointCloudTeacher(nn.Module):
         x = x - gamma * x.mean(dim=1, keepdim=True)
         x = x / (x.std(dim=1, keepdim=True) + 1e-6)
         return x
+    
+    @staticmethod
+    def get_graph_feat(x: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
+        """Optimized KNN feature generator from DGCNN"""
+        B, N, C = x.shape
+        k = idx.shape[2]
+
+        x_ = x.unsqueeze(1).expand(-1, N, -1, -1)           # (B, N, C) -> (B, 1, N, C) -> (B, N, N, C)
+        idx_ = idx.unsqueeze(-1).expand(-1, -1, -1, C)      # (B, N, k, C)
+        feat = torch.gather(x_, dim=2, index=idx_)          # (B, N, k, C)
+        center = x.unsqueeze(2)                             # (B, N, 1, C)
+
+        features = torch.empty(B, N, k, 2*C, device=x.device, dtype=x.dtype)
+        features[..., :C] = feat - center
+        features[..., C:] = center
+        return features.permute(0, 3, 1, 2)                 # (B, 2*C, N, k)
+        
+    def _knn_from_gt(self, pointclouds: torch.Tensor, k: int) -> torch.Tensor:
+        """Compute KNN indices from point clouds."""
+        pair_dist = -torch.cdist(pointclouds, pointclouds, p=2).pow(2)
+        knn_idx = pair_dist.topk(k=k, dim=-1)[1]           
+        return knn_idx                                      # (B, N, k) 
 
     def _freeze_model(self, model: nn.Module):
         model.eval()

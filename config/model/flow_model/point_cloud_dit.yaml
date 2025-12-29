@@ -5,3 +5,4 @@ embed_dim: 512
 num_layers: 6
 num_heads: 8
 dropout_rate: 0.0
+repa_layer: 2

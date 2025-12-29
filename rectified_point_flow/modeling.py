@@ -191,12 +191,7 @@ class RectifiedPointFlow(L.LightningModule):
         )
 
         # Retrieve intermediate and target representations
-        if self.use_repa:
-            repr_pred = self.alignment_teacher(interm_repr)
-            repr_t = self.alignment_teacher.get_target(data_dict)
-        else:
-            repr_pred = torch.zeros_like(interm_repr)
-            repr_t = torch.zeros_like(interm_repr)
+        repr_pred, repr_t = self.alignment_teacher(interm_repr, data_dict) if self.use_repa else (None, None)
 
         output_dict = {
             "t": timesteps,

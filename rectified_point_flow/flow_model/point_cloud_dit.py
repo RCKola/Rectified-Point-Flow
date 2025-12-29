@@ -28,6 +28,7 @@ class PointCloudDiT(nn.Module):
         qk_norm: bool = True,
         attn_dtype: str = "float16",
         final_mlp_act: nn.Module = nn.SiLU,
+        repa_layer: int = 2,
     ):
         """
         Args:
@@ -50,6 +51,7 @@ class PointCloudDiT(nn.Module):
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
         self.final_mlp_act = final_mlp_act
+        self.repa_layer = repa_layer        # Layer index to extract intermediate representation
 
         # Parse attn_dtype
         if attn_dtype == "float16" or attn_dtype == "fp16":
@@ -93,8 +95,6 @@ class PointCloudDiT(nn.Module):
             self.final_mlp_act(),
             nn.Linear(self.embed_dim // 2, out_dim, bias=False)  # No bias for 3D coordinates
         )
-
-        self.repa_layer = 2  # Layer index to extract intermediate representation
 
     def _add_anchor_embedding(
         self,
