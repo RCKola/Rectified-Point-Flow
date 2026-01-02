@@ -228,6 +228,11 @@ class RectifiedPointFlow(L.LightningModule):
         alignment_loss = self.alignment_teacher.loss(repr_pred, repr_t) if self.use_repa else torch.tensor(0.0, device=flow_loss.device)
         loss = flow_loss + alignment_loss
 
+        if not torch.isfinite(loss):
+            print(f"\n[RANK {self.global_rank}] FATAL: NaN/Inf loss at step {self.global_step}")
+            torch.cuda.synchronize()
+            raise ValueError("NaN loss encountered.")
+
         return {
             "loss": loss,
             "norm_v_pred": v_pred.norm(dim=-1).mean().detach(),

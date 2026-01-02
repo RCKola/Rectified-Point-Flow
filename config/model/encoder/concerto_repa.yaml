@@ -2,7 +2,7 @@ _target_: rectified_point_flow.encoder.PointCloudTeacher
 encoder: null
 embed_dim: 512
 repr_dim: 1728      # output dimension of Concerto large
-lmbda: 0.1
+lmbda: 0.5
 loss_type: cosine
 
 # mlp or edgeconv
